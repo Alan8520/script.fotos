@@ -1,162 +1,110 @@
 import os
 
-import cv2
+from PIL import Image
 
-import hashlib
+import imagehash
 
-import numpy as np
+from collections import defaultdict
 
-from skimage.metrics import structural_similarity as compare_ssim
+# Caminho da pasta com as imagens
 
-from itertools import combinations
+pasta = r"C:\caminho\para\sua\pasta"  # <--- troque aqui
 
-# Caminho da pasta com suas imagens
+# Tipos de arquivos válidos
 
-pasta_imagens = r"C:\Users\FBMA\OneDrive - PETROBRAS\Nova pasta\llala"
+tipos = ('.jpg', '.jpeg', '.png')
 
-# Redimensionamento leve pra acelerar
+# Lista todos os arquivos da pasta
 
-largura_padrao = 300
+arquivos = [f for f in os.listdir(pasta) if f.lower().endswith(tipos)]
 
-altura_padrao = 300
+# Agrupar arquivos por NM (baseado no nome antes do parênteses ou extensão)
 
-# Extensões válidas
+def extrair_nm(nome):
 
-extensoes_validas = ('.jpg', '.jpeg', '.png')
+    base = nome.split('(')[0].strip()
 
-# Lista de arquivos válidos
+    base = os.path.splitext(base)[0].strip()
 
-arquivos = [f for f in os.listdir(pasta_imagens) if f.lower().endswith(extensoes_validas)]
+    return base
 
-arquivos.sort()
+grupos_nm = defaultdict(list)
 
-remover = set()
+for arquivo in arquivos:
 
-hash_map = {}
+    nm = extrair_nm(arquivo)
 
-relatorio = []
+    grupos_nm[nm].append(arquivo)
 
-print(f"🔍 Total de imagens encontradas: {len(arquivos)}")
+# Função para comparar duas imagens
 
-print("⚡ Verificando duplicatas exatas...\n")
-
-# ===== 1ª ETAPA: Verifica duplicatas exatas pelo conteúdo (hash)
-
-for nome in arquivos:
-
-    caminho = os.path.join(pasta_imagens, nome)
+def imagens_sao_iguais(caminho1, caminho2):
 
     try:
 
-        with open(caminho, 'rb') as f:
+        with Image.open(caminho1) as img1, Image.open(caminho2) as img2:
 
-            hash_valor = hashlib.md5(f.read()).hexdigest()
+            hash1 = imagehash.phash(img1)
 
-        if hash_valor in hash_map:
+            hash2 = imagehash.phash(img2)
 
-            print(f"💥 [DUPLICATA EXATA] → {nome} será apagada (igual à {hash_map[hash_valor]})")
+            return hash1 - hash2 == 0  # diferença zero = idênticas
 
-            remover.add(nome)
+    except Exception as e:
 
-            relatorio.append(f"Exata: {nome} == {hash_map[hash_valor]}")
+        print(f"Erro ao comparar: {e}")
+
+        return False
+
+# Processar cada grupo de NM
+
+for nm, arquivos_nm in grupos_nm.items():
+
+    print(f"\n🔍 Processando NM: {nm} ({len(arquivos_nm)} arquivos)")
+
+    mantidas = []
+
+    removidas = []
+
+    for atual in arquivos_nm:
+
+        caminho_atual = os.path.join(pasta, atual)
+
+        # Verifica se é idêntica a alguma que já foi mantida
+
+        duplicata = False
+
+        for mantida in mantidas:
+
+            caminho_mantida = os.path.join(pasta, mantida)
+
+            if imagens_sao_iguais(caminho_atual, caminho_mantida):
+
+                duplicata = True
+
+                break
+
+        if duplicata:
+
+            os.remove(caminho_atual)
+
+            removidas.append(atual)
+
+            print(f"🗑️  Removida (idêntica): {atual}")
+
+        elif len(mantidas) < 3:
+
+            mantidas.append(atual)
+
+            print(f"✅ Mantida: {atual}")
 
         else:
 
-            hash_map[hash_valor] = nome
+            os.remove(caminho_atual)
 
-    except Exception as e:
+            removidas.append(atual)
 
-        print(f"[ERRO HASH] {nome}: {str(e)}")
+            print(f"🗑️  Removida (excedente): {atual}")
 
-# Remove duplicatas exatas
-
-for nome in remover:
-
-    caminho = os.path.join(pasta_imagens, nome)
-
-    try:
-
-        os.remove(caminho)
-
-        print(f"[REMOVIDO] {nome}")
-
-    except Exception as e:
-
-        print(f"[ERRO ao remover] {nome}: {str(e)}")
-
-# Atualiza a lista de arquivos após remoção
-
-arquivos = [f for f in arquivos if f not in remover]
-
-remover.clear()
-
-print("\n🔍 Iniciando comparação visual (SSIM)...\n")
-
-# ===== 2ª ETAPA: Comparação visual otimizada
-
-for img1_nome, img2_nome in combinations(arquivos, 2):
-
-    if img1_nome in remover or img2_nome in remover:
-        continue
-
-    caminho1 = os.path.join(pasta_imagens, img1_nome)
-
-    caminho2 = os.path.join(pasta_imagens, img2_nome)
-
-    img1 = cv2.imread(caminho1)
-
-    img2 = cv2.imread(caminho2)
-
-    if img1 is None or img2 is None:
-        print(f"[ERRO] Não conseguiu abrir {img1_nome} ou {img2_nome}")
-
-        continue
-
-    # Redimensiona
-
-    img1_red = cv2.resize(img1, (largura_padrao, altura_padrao))
-
-    img2_red = cv2.resize(img2, (largura_padrao, altura_padrao))
-
-    gray1 = cv2.cvtColor(img1_red, cv2.COLOR_BGR2GRAY)
-
-    gray2 = cv2.cvtColor(img2_red, cv2.COLOR_BGR2GRAY)
-
-    score, _ = compare_ssim(gray1, gray2, full=True)
-
-    print(f"Comparando: {img1_nome} × {img2_nome} → Similaridade: {score:.5f}")
-
-    if score >= 0.9995:
-        print(f"💥 [DUPLICATA VISUAL] → {img2_nome} será apagada (quase idêntica a {img1_nome})\n")
-
-        remover.add(img2_nome)
-
-        relatorio.append(f"Visual: {img2_nome} ≈ {img1_nome}")
-
-# Remove duplicatas visuais
-
-for nome in remover:
-
-    caminho = os.path.join(pasta_imagens, nome)
-
-    try:
-
-        os.remove(caminho)
-
-        print(f"[REMOVIDO] {nome}")
-
-    except Exception as e:
-
-        print(f"[ERRO ao remover] {nome}: {str(e)}")
-
-# Salva o relatório
-
-relatorio_path = os.path.join(pasta_imagens, "relatorio_remocao.txt")
-
-with open(relatorio_path, 'w') as f:
-    for linha in relatorio:
-        f.write(linha + '\n')
-
-print(f"\n✅ Concluído! {len(relatorio)} arquivos duplicados foram removidos.")
-
-print(f"📄 Relatório salvo em: {relatorio_path}")
+print("\n✅ Finalizado. Imagens duplicadas e excedentes foram removidas.")
+ 
